@@ -92,6 +92,18 @@ function port(item: Value, path: string): Port {
 function mount(item: Value, path: string): [string, Value] {
   if (mapping(item) && typeof item.target === 'string') {
     const { target, source, type = 'volume', read_only = false, ...rest } = item
+    if (type === 'bind' && mapping(rest.bind)) {
+      const { create_host_path = false, ...options } = rest.bind
+      delete rest.bind
+      if (create_host_path !== false) options.create_host_path = create_host_path
+      if (Object.keys(options).length) rest.bind = options
+    }
+    if (type === 'volume' && mapping(rest.volume)) {
+      const { nocopy = false, ...options } = rest.volume
+      delete rest.volume
+      if (nocopy !== false) options.nocopy = nocopy
+      if (Object.keys(options).length) rest.volume = options
+    }
     return [target, normalize({ type, ...(source == null ? {} : { source }), target, read_only, ...rest })]
   }
   if (typeof item !== 'string') throw Error(`Expected a mount string or mapping with a target in ${path}.`)
@@ -106,11 +118,23 @@ function mount(item: Value, path: string): [string, Value] {
   } while (offset <= item.length && fields.length < 4)
   if (fields.some(field => !field) || fields.length > 3) throw Error(`Could not read the mount in ${path}.`)
   const [source, target, mode] = fields.length === 1 ? ['', fields[0], 'rw'] : fields
-  const access = (mode ?? 'rw').split(',')
   const type = /^(?:[./~\\]|[a-zA-Z]:[\\/])/.test(source) ? 'bind' : 'volume'
+  let readOnly = false
+  const bind: Mapping = { create_host_path: true }
+  const volume: Mapping = {}
+  const options: string[] = []
+  for (const option of (mode ?? 'rw').split(',')) {
+    if (option === 'ro' || option === 'rw') readOnly = option === 'ro'
+    else if (type === 'volume' && option === 'nocopy') volume.nocopy = true
+    else if (type === 'bind' && /^(r?private|r?shared|r?slave)$/.test(option)) bind.propagation = option
+    else if (type === 'bind' && (option === 'z' || option === 'Z')) bind.selinux = option
+    else options.push(option)
+  }
   const value: Value = {
-    type, ...(source ? { source } : {}), target, read_only: access.includes('ro'),
-    ...(access.some(option => option !== 'ro' && option !== 'rw') ? { options: access.filter(option => option !== 'ro' && option !== 'rw').sort() } : {}),
+    type, ...(source ? { source } : {}), target, read_only: readOnly,
+    ...(type === 'bind' ? { bind } : {}),
+    ...(Object.keys(volume).length ? { volume } : {}),
+    ...(options.length ? { options: options.sort() } : {}),
   }
   return [target, normalize(value)]
 }
@@ -212,6 +236,8 @@ function action(a: unknown, b: unknown): Change['action'] {
 const loopback = /^(?:127\.\d+\.\d+\.\d+|::1|0:0:0:0:0:0:0:1)$/
 const wildcard = new Set(['', '0.0.0.0', '::', '0:0:0:0:0:0:0:0'])
 const portWarning = 'Docker may now accept connections to this port from other hosts. Check the host binding and firewall rules.'
+const privilegedWarning = 'Privileged mode gives this service expanded access to the host.'
+const hostNetworkWarning = 'Where Docker supports host networking, this service shares the host network namespace.'
 
 function widens(a: Port[], b: Port[]) {
   const local = new Set(a.filter(port => loopback.test(port.host)).map(port => port.published))
@@ -236,9 +262,13 @@ export function compare(before: Compose, after: Compose): Change[] {
     const scope = 'Service'
     if (!a || !b) {
       const verb = action(a, b)
+      const warnings = [
+        b?.fields.privileged === true && privilegedWarning,
+        b?.fields.network_mode === 'host' && hostNetworkWarning,
+      ].filter(Boolean)
       out.push({ scope, name, key: 'service', action: verb, title: `Service ${verb}`,
         before: a && serviceSummary(a), after: b && serviceSummary(b),
-        warning: b?.fields.privileged === true ? 'This service runs in privileged mode with expanded access to the host.' : undefined })
+        warning: warnings.join(' ') || undefined })
       continue
     }
     for (const key of union(a.ports.keys(), b.ports.keys())) {
@@ -275,10 +305,8 @@ export function compare(before: Compose, after: Compose): Change[] {
         continue
       }
       const verb = action(old, next)
-      const warning = field === 'privileged' && next === true
-        ? 'This service now runs in privileged mode with expanded access to the host.'
-        : field === 'network_mode' && next === 'host'
-          ? 'Where Docker supports host networking, this service shares the host network namespace.' : undefined
+      const warning = field === 'privileged' && next === true ? privilegedWarning
+        : field === 'network_mode' && next === 'host' ? hostNetworkWarning : undefined
       out.push({ scope, name, key: field, action: verb, title: field === 'image' ? `Image reference ${verb}` : `${field} ${verb}`,
         before: old === undefined ? undefined : display(old), after: next === undefined ? undefined : display(next), warning })
     }

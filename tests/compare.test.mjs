@@ -27,6 +27,20 @@ test('reports changed mount access, image digest, and removed services', () => {
   assert.equal(compare(a, parseCompose('services: {}'))[0].title, 'Service removed')
 })
 
+test('matches mount options across syntax and preserves changes to host path creation', () => {
+  const short = service({ volumes: ['./db:/data:ro,Z,rslave', 'data:/backup:nocopy'] })
+  const long = {
+    type: 'bind', source: './db', target: '/data', read_only: true,
+    bind: { create_host_path: true, selinux: 'Z', propagation: 'rslave' },
+  }
+  const volume = { type: 'volume', source: 'data', target: '/backup', volume: { nocopy: true } }
+  assert.deepEqual(compare(short, service({ volumes: [long, volume] })), [])
+  const changes = compare(short, service({ volumes: [
+    { ...long, bind: { ...long.bind, create_host_path: false } }, volume,
+  ] }))
+  assert.deepEqual(changes.map(change => change.title), ['Mount /data changed'])
+})
+
 test('incomplete and unresolved documents cannot produce an empty diff', () => {
   for (const file of ['services: [', 'services: null', 'services: {db: {ports: 80}}', 'include: [db.yml]\nservices: {}']) {
     assert.throws(() => parseCompose(file))
@@ -74,6 +88,9 @@ test('preserves unresolved interpolation without making a port exposure claim', 
 test('flags privileged mode and host networking', () => {
   const changes = compare(service({}), service({ privileged: true, network_mode: 'host' }))
   assert.equal(changes.filter(change => change.warning).length, 2)
+  const [added] = compare(parseCompose('services: {}'), service({ privileged: true, network_mode: 'host' }))
+  assert.match(added.warning, /Privileged mode/)
+  assert.match(added.warning, /host network namespace/)
 })
 
 test('reports YAML syntax locations and rejects circular or excessive input', () => {
