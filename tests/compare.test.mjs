@@ -54,6 +54,14 @@ test('compares environment values without including them in the report', () => {
   assert.equal(change.after, '1 added, 1 changed. Names and values hidden.')
 })
 
+test('compares scalar environment variables, labels and sysctls as strings', () => {
+  const a = service({ environment: { ENABLED: true }, labels: { enabled: false },
+    sysctls: { 'net.ipv4.ip_forward': 1 }, storage_opt: { size: 1 } })
+  const b = service({ environment: ['ENABLED=true'], labels: ['enabled=false'],
+    sysctls: ['net.ipv4.ip_forward=1'], storage_opt: { size: '1' } })
+  assert.deepEqual(compare(a, b), [])
+})
+
 test('compares project resources without printing secret or config contents', () => {
   const a = parseCompose('services: {}\nsecrets: {token: {file: ./token}}')
   const b = parseCompose('services: {}\nsecrets: {token: {file: ./next}}\nnetworks: {backend: {internal: true}}')
@@ -62,6 +70,14 @@ test('compares project resources without printing secret or config contents', ()
     ['Project', 'networks.backend added'], ['Project', 'secrets.token changed'],
   ])
   assert.equal(changes[1].after, 'Definition hidden')
+})
+
+test('compares project resource names that also exist on Object.prototype', () => {
+  const a = parseCompose('services: {}\nvolumes: {constructor: {}}')
+  const b = parseCompose('services: {}\nvolumes: {toString: {}}')
+  assert.deepEqual(compare(a, b).map(change => change.title), [
+    'volumes.constructor removed', 'volumes.toString added',
+  ])
 })
 
 test('ignores extension fields, comments, map order and common equivalent syntax', () => {

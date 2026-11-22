@@ -154,9 +154,9 @@ function normalizeService(service: Mapping, name: string): Service {
   for (const field of ['environment', 'labels', 'sysctls', 'storage_opt']) {
     if (fields[field] === undefined) continue
     const entries = keyed(fields[field], `${name}.${field}`, '=')
-    fields[field] = normalize(field === 'environment' || field === 'labels'
-      ? Object.fromEntries(Object.entries(entries).map(([key, value]) => [key, value === null ? null : text(value, `${name}.${field}`)]))
-      : entries)
+    fields[field] = normalize(Object.fromEntries(Object.entries(entries).map(([key, value]) => [
+      key, value === null ? null : typeof value === 'boolean' ? String(value) : text(value, `${name}.${field}`),
+    ])))
   }
   for (const field of ['networks', 'depends_on']) {
     if (!Array.isArray(fields[field])) continue
@@ -316,9 +316,12 @@ export function compare(before: Compose, after: Compose): Change[] {
     const a = left.get(section), b = right.get(section)
     if (equal(a, b)) continue
     const sections = new Set(['networks', 'volumes', 'configs', 'secrets'])
-    const entries = sections.has(section) && (a === undefined || mapping(a)) && (b === undefined || mapping(b))
-      ? union(Object.keys(a ?? {}), Object.keys(b ?? {})).map(key => ({ key, title: `${section}.${key}`, a: a?.[key], b: b?.[key] }))
-      : [{ key: section, title: section, a, b }]
+    let entries = [{ key: section, title: section, a, b }]
+    if (sections.has(section) && (a === undefined || mapping(a)) && (b === undefined || mapping(b))) {
+      const old = new Map(Object.entries(a ?? {}))
+      const next = new Map(Object.entries(b ?? {}))
+      entries = union(old.keys(), next.keys()).map(key => ({ key, title: `${section}.${key}`, a: old.get(key), b: next.get(key) }))
+    }
     for (const { key, title, a, b } of entries) {
       if (equal(a, b)) continue
       const verb = action(a, b)
