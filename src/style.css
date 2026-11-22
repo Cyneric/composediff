@@ -27,12 +27,13 @@ code, pre { font-family: var(--mono) }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px }
 .shell { width: min(76rem, calc(100% - 3.5rem)); margin: 0 auto }
 .masthead { background: var(--editor); border-bottom: 1px solid var(--line) }
-.masthead-inner, .brand, nav, .actions, .editor-heading, .file-label, .editor-foot,
+.masthead-inner, .brand, .brand-group, nav, .actions, .editor-heading, .file-label, .editor-foot,
 .privacy, .report-heading, .views, .filters, .export, .report-actions, .filter-row, dialog form {
   display: flex;
   align-items: center;
 }
 .masthead-inner { justify-content: space-between; gap: .75rem; min-height: 4rem }
+.brand-group { gap: clamp(.75rem, 4vw, 2rem) }
 .brand { gap: .6rem; font-size: 1.12rem; font-weight: 680; letter-spacing: -.035em }
 nav, .actions, .filters, .export, .report-actions { gap: .5rem; flex-wrap: wrap }
 .button {
@@ -135,6 +136,59 @@ input::placeholder { color: var(--quiet) }
 .hunk-heading { padding: .35rem .65rem; color: var(--accent); background: var(--raised) }
 .source-row { display: grid; grid-template-columns: 5ch 5ch 1ch 1fr; gap: .6rem; padding-inline: .55rem; white-space: pre }
 .line-number { color: var(--muted); text-align: right; user-select: none }
+.explain-workspace { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 1.5rem; padding-bottom: 3rem }
+.explain-editor { position: sticky; top: 1rem; align-self: start; min-width: 0 }
+.explain-editor .editor { --side-color: var(--accent) }
+.explain-editor .cm-editor { height: clamp(15rem, 62vh, 35rem) }
+.explain-result { min-width: 0 }
+.explain-result .report-heading { margin-bottom: .35rem }
+.timeline-intro { margin: 0 0 1rem; font-size: .9rem }
+.timeline, .timeline-facts, .timeline-services { margin: 0; list-style: none; padding: 0 }
+.timeline-stage { position: relative; padding: .05rem 0 1rem 1.1rem; border-left: 1px solid var(--line); margin-left: .3rem }
+.timeline-stage:last-child { border-color: transparent; padding-bottom: 0 }
+.timeline-stage::before {
+  position: absolute;
+  content: '';
+  top: .36rem;
+  left: -.32rem;
+  width: .55rem;
+  height: .55rem;
+  background: var(--yaml-string);
+  border-radius: 50%;
+}
+.timeline-stage.resources::before { background: var(--accent) }
+.timeline-stage.unresolved::before { background: var(--yellow) }
+.timeline-stage h3 { font-size: .93rem; margin-bottom: .5rem }
+.timeline-hint { margin: -.3rem 0 .55rem; font-size: .83rem }
+.timeline-services { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: .5rem; align-items: start }
+.timeline-card { background: var(--surface); border: 1px solid var(--line); border-radius: .4rem; padding: .65rem .75rem; overflow-wrap: anywhere }
+.timeline-card-heading, .timeline-facts li, .timeline-notes li { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem }
+.timeline-card h4 { font-size: .96rem; color: var(--yaml-string) }
+.timeline-card p, .timeline-notes ul { margin: .2rem 0; font-size: .86rem }
+.timeline-card > .timeline-facts, .timeline-card details { margin-top: .45rem }
+.timeline-card > .timeline-facts:first-child { margin-top: 0 }
+.timeline-facts li { padding: .35rem 0; font-size: .83rem }
+.timeline-facts li + li { border-top: 1px solid var(--line) }
+.timeline-facts p { margin: 0 }
+.timeline-card summary { border-top: 1px solid var(--line); padding: .55rem 0 .15rem; color: var(--accent); cursor: pointer; font-size: .82rem }
+.timeline-card summary span { color: var(--muted); margin-left: .2rem }
+.line-link {
+  flex: none;
+  min-height: 1.5rem;
+  color: var(--accent);
+  padding: .2rem .3rem;
+  font: .75rem var(--mono);
+  cursor: pointer;
+  background: var(--editor);
+  border: 1px solid var(--line);
+  border-radius: .25rem;
+}
+.line-link:hover { background: var(--raised); color: #fff }
+.timeline-notes { margin-bottom: .9rem; background: var(--surface); border-left: 2px solid var(--yellow); padding: .5rem .75rem }
+.timeline-notes h3 { color: var(--yellow); font-size: .86rem }
+.timeline-notes h3 svg { vertical-align: text-bottom; margin-right: .25rem }
+.timeline-notes ul { color: var(--muted); padding: 0; list-style: none }
+.timeline-notes li { padding-top: .25rem; line-height: 1.5; overflow-wrap: anywhere }
 dialog { width: min(36rem, calc(100% - 2rem)); padding: 1.4rem; border: 1px solid var(--line); border-radius: .55rem; background: var(--surface); color: inherit }
 dialog::backdrop { background: #100d14cc }
 dialog h2 { font-size: 1.25rem }
@@ -147,6 +201,15 @@ dialog form { justify-content: flex-end; gap: .5rem }
   .intro { margin-top: 1.65rem }
   .workspace { grid-template-columns: minmax(0, 1fr) }
   .editor .cm-editor { height: 10.5rem }
+  .explain-workspace { grid-template-columns: minmax(0, 1fr); gap: .35rem }
+  .explain-editor { position: static }
+  .explain-editor .cm-editor { height: clamp(13rem, 34vh, 18rem) }
+}
+@media (max-width: 530px) {
+  .masthead-inner { padding-block: .45rem; flex-wrap: wrap }
+  .brand-group { display: contents }
+  .masthead .views { order: 1; flex-basis: 100% }
+  .masthead .views .button { flex: 1 }
 }
 @media (max-width: 400px) {
   .shell { width: calc(100% - 1.5rem) }

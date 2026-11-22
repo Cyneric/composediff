@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Editor } from './Editor'
+import { Explain } from './ExplainWorkspace'
 import { ChangeList, SourceDiff } from './Results'
 import { Icon } from './icons'
 import { empty, example, type Input, type Pair } from './demo'
@@ -11,14 +12,53 @@ import './style.css'
 const repository = 'https://github.com/Cyneric/composediff'
 
 function App() {
+  const [mode, setMode] = useState<'compare' | 'explain'>('compare')
+  const [visitedExplain, setVisitedExplain] = useState(false)
+  const help = useRef<HTMLDialogElement>(null)
+  const explaining = mode === 'explain'
+  return <>
+    <a className="skip" href={explaining ? '#startup' : '#comparison'}>Skip to {explaining ? 'timeline' : 'comparison'}</a>
+    <header className="masthead">
+      <div className="shell masthead-inner">
+        <div className="brand-group">
+          <div className="brand"><img src={`${import.meta.env.BASE_URL}mark.svg`} alt="" width="32" height="32" /> ComposeDiff</div>
+          <div className="views" role="group" aria-label="Workspace mode">
+            <button className="button" aria-pressed={!explaining} onClick={() => setMode('compare')}>Compare</button>
+            <button className="button" aria-pressed={explaining} onClick={() => {
+              setMode('explain')
+              setVisitedExplain(true)
+            }}>Explain</button>
+          </div>
+        </div>
+        <nav aria-label="Project">
+          <button className="button subtle" onClick={() => help.current?.showModal()}>How it works</button>
+          <a className="button" href={repository} target="_blank" rel="noreferrer"><Icon name="github" /> GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main className="shell">
+      <Compare active={!explaining} />
+      {visitedExplain && <Explain active={explaining} />}
+    </main>
+    <dialog ref={help} aria-labelledby="help-title">
+      <h2 id="help-title">How ComposeDiff works</h2>
+      <p><strong>Compare.</strong> Open or paste the original file on the left and the proposed version on the right. Changes skip comments and key order and flag changes such as a port losing its loopback binding.</p>
+      <p><strong>Source diff</strong> shows the file text, including passwords and tokens. Changes and Markdown show counts for edits to service environment variables and hide top-level config and secret definition values. Check the whole report before sharing.</p>
+      <p><strong>Explain.</strong> Open one file to see startup dependencies and service settings. Select a line number to jump to that setting in the editor.</p>
+      <p>For overrides, variables, <code>include</code> or <code>extends</code>, run <code>docker compose config</code> locally. Paste the resolved file to inspect the effective configuration.</p>
+      <form method="dialog"><button className="button primary">Close</button></form>
+    </dialog>
+  </>
+}
+
+function Compare({ active: visible }: { active: boolean }) {
   const [files, setFiles] = useState<Pair>(example)
   const [view, setView] = useState<View>('changes')
   const [replace, setReplace] = useState<'example' | 'empty'>('empty')
   const [revisions, setRevisions] = useState([0, 0])
-  const help = useRef<HTMLDialogElement>(null)
   const confirm = useRef<HTMLDialogElement>(null)
   const [before, after] = files
-  const { active, semantic } = useReport(view, before.text, after.text)
+  const { active, semantic } = useReport(view, before.text, after.text, visible)
   const report = active?.result
   const errors = semantic?.view === 'changes' ? semantic.errors : []
   const blank = files.map(file => !file.text.trim())
@@ -50,18 +90,7 @@ function App() {
     active?.error ?? (!report ? 'Comparing files…' : report.view === 'changes' && errors.some(Boolean) ?
       'Fix the YAML errors or switch to Source diff.' : '')
 
-  return <>
-    <a className="skip" href="#comparison">Skip to comparison</a>
-    <header className="masthead">
-      <div className="shell masthead-inner">
-        <div className="brand"><img src={`${import.meta.env.BASE_URL}mark.svg`} alt="" width="32" height="32" /> ComposeDiff</div>
-        <nav aria-label="Project">
-          <button className="button subtle" onClick={() => help.current?.showModal()}>How it works</button>
-          <a className="button" href={repository} target="_blank" rel="noreferrer"><Icon name="github" /> GitHub</a>
-        </nav>
-      </div>
-    </header>
-    <main className="shell">
+  return <div hidden={!visible}>
       <div className="intro">
         <div>
           <h1>Compare Compose files</h1>
@@ -93,15 +122,6 @@ function App() {
         <ChangeList key={revisions.join(':')} report={matched ? report : undefined} />
         {ready && report?.view === 'source' && <SourceDiff report={report} />}
       </section>
-    </main>
-    <dialog ref={help} aria-labelledby="help-title">
-      <h2 id="help-title">How ComposeDiff compares files</h2>
-      <p>Open or paste the original file on the left and the proposed version on the right. Changes update as you edit.</p>
-      <p><strong>Changes</strong> skips comments and key order and treats some short and long forms as equivalent. Warnings flag changes such as a port losing its loopback binding.</p>
-      <p><strong>Source diff</strong> shows the file text, including passwords and tokens. Changes and Markdown show counts for edits to service environment variables and hide top-level config and secret definition values. Check the whole report before sharing.</p>
-      <p>For overrides, variables, <code>include</code> or <code>extends</code>, run <code>docker compose config</code> locally for each version. Paste the resolved files to compare the effective configuration.</p>
-      <form method="dialog"><button className="button primary">Close</button></form>
-    </dialog>
     <dialog ref={confirm} aria-labelledby="confirm-title">
       <h2 id="confirm-title">{replace === 'example' ? 'Load the example?' : 'Clear both editors?'}</h2>
       <p>This replaces the current text in both editors.</p>
@@ -112,7 +132,7 @@ function App() {
         </button>
       </form>
     </dialog>
-  </>
+  </div>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

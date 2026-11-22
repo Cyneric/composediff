@@ -1,6 +1,6 @@
 # ComposeDiff
 
-Compare two Docker Compose files in your browser. Review changes by service and copy a Markdown report into a pull request. The files stay in your tab.
+Compare two Docker Compose files or see how one file starts its services. Review changes by service and copy a Markdown report into a pull request. The files stay in your tab.
 
 [Try the live demo](https://cyneric.github.io/composediff/). It opens with a PostgreSQL update that changes the port mapping from `127.0.0.1:5432:5432` to `5432:5432`. With Docker's default binding, other hosts may now be able to connect. ComposeDiff flags that change next to the image update.
 
@@ -25,6 +25,14 @@ Open the URL printed in your terminal. The example is already loaded. Paste, dro
 - **Copy Markdown** and **Download** export all compared changes, even when you filter the view. Changes and Markdown show counts for edits to service environment variables and hide top-level config and secret definition values. Other fields may contain sensitive values. Review the report before sharing it.
 
 ComposeDiff compares the files you give it. It does not resolve variables, merge override files, or validate against the full Compose schema. To compare the effective configurations, run [`docker compose config`](https://docs.docker.com/reference/cli/docker/compose/config/) for each version in its project directory. Use the same options and environment you use at deploy time, then compare the two outputs. They may contain resolved secrets.
+
+## Explain a Compose file
+
+Select **Explain** and open or paste one file. The startup timeline shows project resources, services that have no prerequisites, and services that wait for others. A dependency lists what Compose waits for, such as a passing healthcheck. Select a line number to jump to the matching YAML. Expand **Service settings** to see what ports, mounts, and other common settings do.
+
+![Explain shows Redis and PostgreSQL side by side, then explains why the web service waits for PostgreSQL to pass its healthcheck](docs/explain.png)
+
+The timeline follows dependencies declared in the file. It cannot predict exact start times, which profiles are active, or whether containers will start successfully. ComposeDiff flags missing dependencies, cycles, and settings that depend on variables, `include`, or `extends`. Use `docker compose config` to see the settings Compose resolves locally. Explain accepts up to 250 services per file.
 
 ## Build and test
 

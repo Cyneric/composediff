@@ -120,6 +120,43 @@ def check(url):
         expect(page.get_by_role("button", name="All changes 1")).to_have_attribute("aria-pressed", "true")
         expect(page.get_by_role("heading", name="Service added")).to_be_visible()
 
+        explain = page.get_by_role("button", name="Explain", exact=True)
+        explain.click()
+        timeline = page.get_by_role("region", name="Startup timeline")
+        expect(timeline.get_by_text("Waits for db to pass its healthcheck.")).to_be_visible()
+        expect(timeline.get_by_role("heading", name="Services with no prerequisites")).to_be_visible()
+        step = timeline.locator(".timeline-card").filter(has=page.get_by_role("heading", name="web", exact=True))
+        step.get_by_text("Service settings").click()
+        binding = step.get_by_text("Publishes container port 80/tcp using host port 8080 on 127.0.0.1.")
+        expect(binding).to_be_visible()
+        if screenshot_dir:
+            page.screenshot(path=target / "composediff-explain.png", full_page=True)
+        jump = binding.locator("../..").get_by_role("button", name=re.compile("Go to YAML line"))
+        jump.focus()
+        jump.press("Enter")
+        compose = page.get_by_role("textbox", name="Compose file", exact=True)
+        expect(compose).to_be_focused()
+        assert "127.0.0.1:8080:80" in compose.evaluate("el => getSelection().anchorNode.parentElement.closest('.cm-line').textContent")
+
+        compose.fill("services: {broken: {depends_on: [missing]}, independent: {image: alpine}}")
+        expect(timeline.get_by_role("heading", name="Startup order unknown")).to_be_visible()
+        expect(timeline.get_by_text("missing is required but not defined in this file.")).to_be_visible()
+        page.get_by_role("button", name="Compare", exact=True).click()
+        expect(after).to_contain_text("app0")
+        explain.click()
+        expect(compose).to_contain_text("broken")
+        compose.fill("services:\n  db: [")
+        expect(compose).to_have_attribute("aria-invalid", "true")
+        expect(timeline.get_by_text("See the error under the editor.")).to_be_visible()
+        with page.expect_file_chooser() as chooser:
+            page.get_by_role("button", name="Open Compose file").click()
+        chooser.value.set_files({
+            "name": "single.yml", "mimeType": "text/yaml",
+            "buffer": b"services: {single: {image: alpine}}\n",
+        })
+        expect(timeline.get_by_role("heading", name="single", exact=True)).to_be_visible()
+        expect(compose).not_to_have_attribute("aria-invalid", "true")
+
         page.set_viewport_size({"width": 360, "height": 800})
         page.reload(wait_until="networkidle")
         expect(warning).to_be_visible()
@@ -127,6 +164,11 @@ def check(url):
         assert page.evaluate("!localStorage.length && !sessionStorage.length")
         if screenshot_dir:
             page.screenshot(path=target / "composediff-mobile.png", full_page=True)
+        explain.click()
+        expect(timeline.get_by_text("Waits for db to pass its healthcheck.")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth === innerWidth")
+        if screenshot_dir:
+            page.screenshot(path=target / "composediff-explain-mobile.png", full_page=True)
         assert not errors, errors
         assert not failures, failures
         assert all(method == "GET" and request.startswith(url) for method, request in requests), requests

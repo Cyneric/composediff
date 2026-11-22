@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Result, View } from './report'
+import type { Request, Result } from './report'
 
 type Response = { result?: Result; error?: string }
 type Job = { before: string; after: string; response: Response }
 
-export function useReport(view: View, before: string, after: string) {
+export function useReport(view: Request['view'], before: string, after = '', enabled = true) {
   const worker = useRef<Worker | null>(null)
   const lastId = useRef(0)
-  const [jobs, setJobs] = useState<Partial<Record<View, Job>>>({})
+  const [jobs, setJobs] = useState<Partial<Record<Request['view'], Job>>>({})
   const matching = (job?: Job) => job?.before === before && job.after === after ? job.response : undefined
   const latest = matching(jobs[view])
   useEffect(() => () => {
@@ -15,7 +15,7 @@ export function useReport(view: View, before: string, after: string) {
     worker.current = null
   }, [])
   useEffect(() => {
-    if (latest || (!before.trim() && !after.trim()) || (view === 'source' && (!before.trim() || !after.trim()))) return
+    if (!enabled || latest || (!before.trim() && !after.trim()) || (view === 'source' && (!before.trim() || !after.trim()))) return
     const id = ++lastId.current
     let deadline: number | undefined
     const complete = (response: Response) => setJobs(jobs => ({ ...jobs, [view]: { before, after, response } }))
@@ -35,16 +35,16 @@ export function useReport(view: View, before: string, after: string) {
         worker.current.onerror = () => {
           window.clearTimeout(deadline)
           discardWorker()
-          complete({ error: 'Could not start the comparison. Reload the page to try again.' })
+          complete({ error: 'Could not read the files. Reload the page to try again.' })
         }
         deadline = window.setTimeout(() => {
           discardWorker()
-          complete({ error: 'The comparison took too long. Try smaller files.' })
+          complete({ error: 'Reading the files took too long. Try a smaller file.' })
         }, 4_000)
         worker.current.postMessage({ id, view, before, after })
       } catch {
         discardWorker()
-        complete({ error: 'Could not start the comparison. Reload the page to try again.' })
+        complete({ error: 'Could not read the files. Reload the page to try again.' })
       }
     }, 140)
     return () => {
@@ -56,6 +56,6 @@ export function useReport(view: View, before: string, after: string) {
         worker.current.onerror = null
       }
     }
-  }, [view, before, after, latest])
+  }, [view, before, after, latest, enabled])
   return { active: latest, semantic: matching(jobs.changes)?.result }
 }

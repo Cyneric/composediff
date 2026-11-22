@@ -4,6 +4,6 @@ self.onmessage = ({ data }: MessageEvent<Request>) => {
   try {
     self.postMessage({ id: data.id, result: buildReport(data) })
   } catch {
-    self.postMessage({ id: data.id, error: 'Could not compare these files. Try smaller inputs.' })
+    self.postMessage({ id: data.id, error: 'Could not read the files. Try a smaller file.' })
   }
 }

@@ -1,8 +1,6 @@
-import { LineCounter, parseDocument, stringify } from 'yaml'
-import { MAX_INPUT } from './limits.ts'
-
-type Value = null | string | number | boolean | Value[] | { [key: string]: Value }
-type Mapping = { [key: string]: Value }
+import { stringify } from 'yaml'
+import { mapping, normalize, readComposeYaml, type Mapping, type Value } from './yaml.ts'
+export { YamlError } from './yaml.ts'
 type Port = { key: string; host: string; published: string; value: string }
 type Service = {
   fields: Mapping
@@ -21,29 +19,6 @@ export type Change = {
   warning?: string
 }
 
-function mapping(value: unknown): value is Mapping {
-  return Object.prototype.toString.call(value) === '[object Object]'
-}
-
-function normalize(input: unknown): Value {
-  let remaining = 60_000
-  const ancestors = new Set<object>()
-  function visit(value: unknown, depth: number): Value {
-    if (--remaining < 0 || depth > 100) throw Error('This YAML has too many values or levels of nesting.')
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
-    if (typeof value === 'number' && Number.isFinite(value)) return value
-    if (!Array.isArray(value) && !mapping(value)) throw Error('Expected plain YAML values with finite numbers.')
-    if (ancestors.has(value)) throw Error('This YAML contains a circular alias.')
-    ancestors.add(value)
-    const result = Array.isArray(value)
-      ? value.map(item => visit(item, depth + 1))
-      : Object.fromEntries(Object.keys(value).sort().map(key => [key, visit(value[key], depth + 1)]))
-    ancestors.delete(value)
-    return result
-  }
-  return visit(input, 0)
-}
-
 function list(value: Value | undefined, path: string) {
   if (value === undefined) return []
   if (!Array.isArray(value)) throw Error(`${path} must be a list.`)
@@ -60,7 +35,7 @@ function display(value: Value): string {
     ? value : stringify(value, { lineWidth: 0 }).trimEnd()
 }
 
-function port(item: Value, path: string): Port {
+export function port(item: Value, path: string): Port {
   let host = '', published = '', protocol = 'tcp', target: string
   let options: Mapping = {}
   if (mapping(item)) {
@@ -89,7 +64,7 @@ function port(item: Value, path: string): Port {
   return { key, host, published, value: Object.keys(options).length ? `${binding}\n${display(options)}` : binding }
 }
 
-function mount(item: Value, path: string): [string, Value] {
+export function mount(item: Value, path: string): [string, Mapping] {
   if (mapping(item) && typeof item.target === 'string') {
     const { target, source, type = 'volume', read_only = false, ...rest } = item
     if (type === 'bind' && mapping(rest.bind)) {
@@ -104,7 +79,7 @@ function mount(item: Value, path: string): [string, Value] {
       if (nocopy !== false) options.nocopy = nocopy
       if (Object.keys(options).length) rest.volume = options
     }
-    return [target, normalize({ type, ...(source == null ? {} : { source }), target, read_only, ...rest })]
+    return [target, { type, ...(source == null ? {} : { source }), target, read_only, ...rest }]
   }
   if (typeof item !== 'string') throw Error(`Expected a mount string or mapping with a target in ${path}.`)
   const fields: string[] = []
@@ -130,13 +105,13 @@ function mount(item: Value, path: string): [string, Value] {
     else if (type === 'bind' && (option === 'z' || option === 'Z')) bind.selinux = option
     else options.push(option)
   }
-  const value: Value = {
+  const value: Mapping = {
     type, ...(source ? { source } : {}), target, read_only: readOnly,
     ...(type === 'bind' ? { bind } : {}),
     ...(Object.keys(volume).length ? { volume } : {}),
     ...(options.length ? { options: options.sort() } : {}),
   }
-  return [target, normalize(value)]
+  return [target, value]
 }
 
 function keyed(value: Value, path: string, separator: string): Mapping {
@@ -187,36 +162,15 @@ function normalizeService(service: Mapping, name: string): Service {
   for (const item of list(volumes, `${name}.volumes`)) {
     const [target, entry] = mount(item, `${name}.volumes`)
     if (mounts.has(target)) throw Error(`${name}.volumes has more than one mount for ${target}.`)
-    mounts.set(target, entry)
+    mounts.set(target, normalize(entry))
   }
   return { fields, ports: bindings, mounts }
 }
 
-export class YamlError extends Error {
-  readonly line: number
-  readonly column: number
-
-  constructor(message: string, line: number, column: number) {
-    super(`Line ${line}, column ${column}: ${message}`)
-    this.line = line
-    this.column = column
-  }
-}
-
 export function parseCompose(source: string): Compose {
-  if (source.length > MAX_INPUT) throw Error('Use files with at most 500,000 characters.')
-  const lineCounter = new LineCounter()
-  const doc = parseDocument(source, { merge: true, prettyErrors: false, lineCounter })
-  const problem = doc.errors[0] ?? doc.warnings[0]
-  if (problem) {
-    const { line, col } = lineCounter.linePos(problem.pos[0])
-    throw new YamlError(problem.message, line, col)
-  }
-  const data: unknown = doc.toJS({ maxAliasCount: 50 })
-  if (!mapping(data) || !mapping(data.services)) throw Error('Expected a top-level services mapping.')
-  if ('include' in data) throw Error('Resolve include with docker compose config.')
-  const clean = normalize(data)
-  if (!mapping(clean) || !mapping(clean.services)) throw Error('Expected a top-level services mapping.')
+  const { data: clean } = readComposeYaml(source)
+  if ('include' in clean) throw Error('Resolve include with docker compose config.')
+  if (!mapping(clean.services)) throw Error('Expected a top-level services mapping.')
   const { services, version, ...project } = clean
   const notes: string[] = []
   if (/\$(?:\{|\w)/.test(source)) notes.push('Variables are compared as written. Resolve them with docker compose config to compare their values.')

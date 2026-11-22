@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react'
 import { Compartment, EditorState, Prec } from '@codemirror/state'
 import { EditorView, highlightActiveLine, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
@@ -8,6 +8,7 @@ import { tags } from '@lezer/highlight'
 import { MAX_INPUT } from './limits'
 import type { Input } from './demo'
 import type { Diagnostic } from './report'
+import type { Location } from './yaml'
 import { Icon } from './icons'
 
 const highlighting = syntaxHighlighting(HighlightStyle.define([
@@ -29,9 +30,13 @@ function attrs(side: string, error?: string) {
   })
 }
 
-export function Editor({ side, input, onChange, error }: {
-  side: 'Before' | 'After'; input: Input; onChange: (input: Input, opened?: boolean) => void; error?: Diagnostic
+export type EditorHandle = { goTo: (location: Location) => void }
+
+export function Editor({ side, input, onChange, error, ref }: {
+  side: 'Before' | 'After' | 'Compose file'; input: Input; onChange: (input: Input, opened?: boolean) => void;
+  error?: Diagnostic; ref?: Ref<EditorHandle>
 }) {
+  const id = side.toLowerCase().replace(' ', '-')
   const host = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const view = useRef<EditorView>(null)
@@ -55,7 +60,7 @@ export function Editor({ side, input, onChange, error }: {
         EditorView.theme({}, { dark: true }),
         lineNumbers(), highlightActiveLine(), history(), yaml(), highlighting,
         placeholder('Paste YAML or open a file'),
-        attributes.current.of(attrs(side)),
+        attributes.current.of(attrs(id)),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorState.tabSize.of(2),
         EditorState.changeFilter.of(transaction => {
@@ -82,13 +87,13 @@ export function Editor({ side, input, onChange, error }: {
     })
     view.current = editor
     return () => { editor.destroy(); view.current = null }
-  }, [side])
+  }, [id])
 
   useLayoutEffect(() => {
-    view.current?.dispatch({ effects: attributes.current.reconfigure(attrs(side, message)) })
-  }, [side, message])
+    view.current?.dispatch({ effects: attributes.current.reconfigure(attrs(id, message)) })
+  }, [id, message])
 
-  function goToError({ line, column }: NonNullable<Diagnostic['location']>) {
+  function goTo({ line, column }: Location) {
     const editor = view.current
     if (!editor) return
     const target = editor.state.doc.line(Math.min(line, editor.state.doc.lines))
@@ -97,7 +102,9 @@ export function Editor({ side, input, onChange, error }: {
       scrollIntoView: true,
     })
     editor.focus()
+    editor.dom.scrollIntoView({ block: 'nearest' })
   }
+  useImperativeHandle(ref, () => ({ goTo }), [])
 
   async function openFiles(files: FileList) {
     const id = ++reading.current
@@ -122,7 +129,7 @@ export function Editor({ side, input, onChange, error }: {
   }
 
   return <section className={`editor${dragging ? ' dragging' : ''}`}
-    aria-labelledby={`${side}-title`}
+    aria-labelledby={`${id}-title`}
     onDragOver={event => {
       if (!event.dataTransfer.types.includes('Files')) return
       event.preventDefault()
@@ -140,10 +147,10 @@ export function Editor({ side, input, onChange, error }: {
     }}>
     <div className="editor-heading">
       <div className="file-label">
-        <h2 id={`${side}-title`}>{side}</h2>
+        <h2 id={`${id}-title`}>{side}</h2>
         <span className="filename" title={input.filename}>{input.filename}</span>
       </div>
-      <button className="button subtle" type="button" aria-label={`Open ${side.toLowerCase()} file`}
+      <button className="button subtle" type="button" aria-label={side === 'Compose file' ? 'Open Compose file' : `Open ${side.toLowerCase()} file`}
         onClick={() => fileInput.current?.click()}><Icon name="file" /> Open file</button>
       <input ref={fileInput} type="file" accept=".yml,.yaml,.json,.txt,text/plain" hidden
         onChange={event => {
@@ -152,13 +159,13 @@ export function Editor({ side, input, onChange, error }: {
         }} />
     </div>
     <div ref={host} />
-    <div className="editor-foot" id={`${side}-hint`}>
+    <div className="editor-foot" id={`${id}-hint`}>
       <span>{dragging ? 'Drop to open file' : 'Paste, edit or drop a file'}</span>
       <span>YAML</span>
     </div>
     {message && <div className="error">
-      <p id={`${side}-error`} role="status">{message}</p>
-      {location && <button className="button subtle" type="button" onClick={() => goToError(location)}>
+      <p id={`${id}-error`} role="status">{message}</p>
+      {location && <button className="button subtle" type="button" onClick={() => goTo(location)}>
         Go to line {location.line}
       </button>}
     </div>}
