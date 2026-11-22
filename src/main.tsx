@@ -14,7 +14,7 @@ function App() {
   const [files, setFiles] = useState<Pair>(example)
   const [view, setView] = useState<View>('changes')
   const [replace, setReplace] = useState<'example' | 'empty'>('empty')
-  const [revision, setRevision] = useState(0)
+  const [revisions, setRevisions] = useState([0, 0])
   const help = useRef<HTMLDialogElement>(null)
   const confirm = useRef<HTMLDialogElement>(null)
   const [before, after] = files
@@ -26,14 +26,15 @@ function App() {
   const sample = files.every((file, index) => file === example[index])
   const matched = report?.view === 'changes' && !errors.some(Boolean) && ready
 
-  function update(index: 0 | 1, input: Input) {
+  function update(index: 0 | 1, input: Input, opened?: boolean) {
     setFiles(current => index === 0 ? [input, current[1]] : [current[0], input])
+    if (opened) setRevisions(current => current.map((value, side) => value + Number(side === index)))
   }
 
   function replaceFiles(kind: 'example' | 'empty') {
     setFiles(kind === 'example' ? example : empty)
     setView('changes')
-    setRevision(current => current + 1)
+    setRevisions(current => current.map(value => value + 1))
   }
 
   function requestReplace(kind: 'example' | 'empty') {
@@ -71,13 +72,13 @@ function App() {
           <button className="button" onClick={() => requestReplace('example')} disabled={sample}>Load example</button>
           <button className="button" onClick={() => {
             setFiles([after, before])
-            setRevision(current => current + 1)
+            setRevisions(current => current.map(value => value + 1))
           }} disabled={blank.every(Boolean)}><Icon name="swap" /> Swap</button>
         </div>
       </div>
       <div className="workspace">
-        <Editor key={`before-${revision}`} side="Before" input={before} onChange={input => update(0, input)} error={errors[0]} />
-        <Editor key={`after-${revision}`} side="After" input={after} onChange={input => update(1, input)} error={errors[1]} />
+        <Editor key={`before-${revisions[0]}`} side="Before" input={before} onChange={(input, opened) => update(0, input, opened)} error={errors[0]} />
+        <Editor key={`after-${revisions[1]}`} side="After" input={after} onChange={(input, opened) => update(1, input, opened)} error={errors[1]} />
       </div>
       <p className="privacy"><Icon name="lock" /> Files stay in this tab. No uploads or autosave.</p>
       <section id="comparison" aria-labelledby="comparison-title" tabIndex={-1}>
@@ -96,8 +97,8 @@ function App() {
     <dialog ref={help} aria-labelledby="help-title">
       <h2 id="help-title">How ComposeDiff compares files</h2>
       <p>Open or paste the original file on the left and the proposed version on the right. Changes update as you edit.</p>
-      <p><strong>Changes</strong> compares settings and skips comments, key order and common equivalent syntax. Warnings flag a few changes worth checking, such as a port losing its loopback binding.</p>
-      <p><strong>Source diff</strong> shows the original text, including passwords and tokens. Changes and Markdown hide environment variable names and values, plus top-level config and secret definitions. Other fields can still contain sensitive values.</p>
+      <p><strong>Changes</strong> skips comments and key order and treats some short and long forms as equivalent. Warnings flag changes such as a port losing its loopback binding.</p>
+      <p><strong>Source diff</strong> shows the file text, including passwords and tokens. Changes and Markdown show counts for edits to service environment variables and hide top-level config and secret definition values. Check the whole report before sharing.</p>
       <p>For overrides, variables, <code>include</code> or <code>extends</code>, run <code>docker compose config</code> locally for each version. Paste the resolved files to compare the effective configuration.</p>
       <form method="dialog"><button className="button primary">Close</button></form>
     </dialog>

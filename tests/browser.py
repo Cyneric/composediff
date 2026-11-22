@@ -83,6 +83,8 @@ def check(url):
         expect(page.get_by_text("Markdown copied. Check for secrets before sharing.")).to_be_visible()
         assert "TOKEN" not in page.evaluate("navigator.clipboard.readText()")
 
+        before.fill("services: {local_edit: {}}")
+        expect(page.get_by_role("heading", name="Service removed")).to_be_visible()
         page.get_by_role("region", name="Before", exact=True).dispatch_event("drop", {
             "dataTransfer": page.evaluate_handle("""() => {
                 const transfer = new DataTransfer()
@@ -92,6 +94,8 @@ def check(url):
         })
         expect(page.get_by_text("dropped.yaml", exact=True)).to_be_visible()
         expect(before).to_contain_text("services: {}")
+        before.press("ControlOrMeta+z")
+        expect(before).to_have_text("services: {}")
         expect(page.get_by_role("heading", name="Service added")).to_be_visible()
 
         page.set_viewport_size({"width": 360, "height": 800})

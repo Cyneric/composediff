@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Compartment, EditorState, Prec, Transaction } from '@codemirror/state'
+import { Compartment, EditorState, Prec } from '@codemirror/state'
 import { EditorView, highlightActiveLine, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { history, historyKeymap, defaultKeymap } from '@codemirror/commands'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
@@ -29,12 +29,13 @@ function attrs(side: string, error?: string) {
 }
 
 export function Editor({ side, input, onChange, error }: {
-  side: 'Before' | 'After'; input: Input; onChange: (input: Input) => void; error?: string
+  side: 'Before' | 'After'; input: Input; onChange: (input: Input, opened?: boolean) => void; error?: string
 }) {
   const host = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const view = useRef<EditorView>(null)
   const state = useRef({ input, onChange })
+  const reading = useRef(0)
   const attributes = useRef(new Compartment())
   const [fileError, setFileError] = useState('')
   const [dragging, setDragging] = useState(false)
@@ -71,7 +72,7 @@ export function Editor({ side, input, onChange, error }: {
           },
         })),
         EditorView.updateListener.of(update => {
-          if (!update.docChanged || update.transactions.every(tr => tr.annotation(Transaction.userEvent) === 'replaceInput')) return
+          if (!update.docChanged) return
           setFileError('')
           state.current.onChange({ ...state.current.input, text: update.state.doc.toString() })
         }),
@@ -82,39 +83,29 @@ export function Editor({ side, input, onChange, error }: {
   }, [side])
 
   useLayoutEffect(() => {
-    const editor = view.current
-    if (!editor || editor.state.doc.toString() === input.text) return
-    setFileError('')
-    editor.dispatch({
-      changes: { from: 0, to: editor.state.doc.length, insert: input.text },
-      selection: { anchor: 0 },
-      scrollIntoView: true,
-      annotations: [Transaction.userEvent.of('replaceInput'), Transaction.addToHistory.of(false)],
-    })
-  }, [input])
-
-  useLayoutEffect(() => {
     view.current?.dispatch({ effects: attributes.current.reconfigure(attrs(side, message)) })
   }, [side, message])
 
   async function openFiles(files: FileList) {
+    const id = ++reading.current
     if (files.length !== 1) { setFileError('Open one file per editor.'); return }
     const file = files[0]
     if (file.size > MAX_INPUT * 4) { setFileError(sizeError); return }
     const previous = state.current.input
+    const current = () => view.current && reading.current === id && state.current.input === previous
     let text: string
     try {
       const bytes = await file.arrayBuffer()
-      if (state.current.input !== previous) return
+      if (!current()) return
       text = new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/\r\n?/g, '\n')
     } catch {
-      setFileError('Could not read this file as UTF-8 text.')
+      if (current()) setFileError('Could not read this file as UTF-8 text.')
       return
     }
     if (text.length > MAX_INPUT) { setFileError(sizeError); return }
     if (text.includes('\0')) { setFileError('Open a UTF-8 text file.'); return }
     setFileError('')
-    state.current.onChange({ text, filename: file.name })
+    state.current.onChange({ text, filename: file.name }, true)
   }
 
   return <section className={`editor${dragging ? ' dragging' : ''}`}
