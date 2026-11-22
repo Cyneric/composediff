@@ -46,3 +46,11 @@ python tests/browser.py
 ## Host the demo
 
 For GitHub Pages, select **GitHub Actions** as the source under **Settings → Pages**, then run **Publish demo** on `main` from the Actions tab. The workflow publishes the contents of `dist/`. Pushes and pull requests run checks without publishing the site.
+
+## Contributing
+
+Contributions are welcome. If ComposeDiff gets a file wrong, [open an issue](https://github.com/Cyneric/composediff/issues/new) with a small example that reproduces it. Remove any credentials first. Pull requests with fixes, tests, or clearer explanations are welcome too.
+
+## License
+
+ComposeDiff is released under the [MIT License](LICENSE). Use it for any purpose, including commercial work. You can modify it and share or sell copies. Keep the copyright and license notices with any copies or substantial portions you distribute.
