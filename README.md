@@ -2,7 +2,7 @@
 
 Compare two Docker Compose files in your browser. Review changes by service and copy a Markdown report into a pull request. The files stay in your tab.
 
-The built-in example updates PostgreSQL and changes its port mapping from `127.0.0.1:5432:5432` to `5432:5432`. With Docker's default binding, other hosts may now be able to connect. ComposeDiff flags that change next to the image update.
+[Try the live demo](https://cyneric.github.io/composediff/). It opens with a PostgreSQL update that changes the port mapping from `127.0.0.1:5432:5432` to `5432:5432`. With Docker's default binding, other hosts may now be able to connect. ComposeDiff flags that change next to the image update.
 
 ![ComposeDiff showing two YAML editors and a warning that PostgreSQL is no longer limited to loopback](docs/composediff.png)
 
