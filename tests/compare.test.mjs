@@ -1,12 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { compare, parseCompose } from '../src/compare.ts'
-import * as demo from '../src/demo.ts'
+import { example } from '../src/demo.ts'
 
 const service = config => parseCompose(JSON.stringify({ services: { db: config } }))
 
 test('demo flags removal of the explicit loopback address', () => {
-  const changes = compare(parseCompose(demo.before), parseCompose(demo.after))
+  const [before, after] = example.map(input => parseCompose(input.text))
+  const changes = compare(before, after)
   assert.equal(changes.length, 2)
   assert.match(changes[0].warning, /other hosts/)
   assert.equal(changes[0].name, 'postgres')

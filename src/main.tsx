@@ -1,61 +1,117 @@
-import { useMemo, useState } from 'react'
+import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { compare, parseCompose } from './compare'
-import * as demo from './demo'
+import { Editor } from './Editor'
+import { ChangeList, SourceDiff } from './Results'
+import { Icon } from './icons'
+import { empty, example, type Input, type Pair } from './demo'
+import type { View } from './report'
+import { useReport } from './useReport'
 import './style.css'
 
-function parseInput(source: string) {
-  if (!source.trim()) return { error: 'Paste a Compose file to compare.' }
-  try { return { services: parseCompose(source) } }
-  catch (error) { return { error: error instanceof Error ? error.message : 'Could not read this file.' } }
-}
-
-function Editor({ name, text, edit, error }: {
-  name: string; text: string; edit: (s: string) => void; error?: string
-}) {
-  return <div className="editor">
-    <label htmlFor={name}>{name}<span>compose.yaml</span></label>
-    <textarea id={name} value={text} onChange={e => edit(e.target.value)}
-      aria-invalid={!!error} aria-describedby={error ? `${name}-error` : undefined}
-      placeholder="Paste your compose.yaml here" spellCheck={false} autoCapitalize="off" autoComplete="off" wrap="off" />
-    {error && <p className="error" id={`${name}-error`}>{error}</p>}
-  </div>
-}
+const repository = 'https://github.com/Cyneric/composediff'
 
 function App() {
-  const [before, setBefore] = useState(demo.before)
-  const [after, setAfter] = useState(demo.after)
-  const old = useMemo(() => parseInput(before), [before])
-  const next = useMemo(() => parseInput(after), [after])
-  const changes = old.services && next.services ? compare(old.services, next.services) : null
-  return <main>
-    <header><div className="brand"><img src="./mark.svg" alt="" />ComposeDiff</div>
-      <a href="https://github.com/Cyneric/composediff">GitHub</a></header>
-    <h1>Compare Compose files</h1>
-    <p className="intro">Paste two versions to see which services, ports, mounts and images change.</p>
-    <section className="editors" aria-label="Compose files">
-      <Editor name="Before" text={before} edit={setBefore} error={old.error}/>
-      <Editor name="After" text={after} edit={setAfter} error={next.error}/>
-    </section>
-    <div className="toolbar"><span>Both files stay in this tab.</span>
-      <button disabled={before === demo.before && after === demo.after} onClick={() => {
-        setBefore(demo.before); setAfter(demo.after)
-      }}>Restore example</button></div>
-    <section className="report" aria-labelledby="results">
-      <h2 id="results" aria-live="polite">{changes === null ? 'Comparison unavailable' : changes.length === 0
-        ? 'No changes in the compared fields' : `${changes.length} ${changes.length === 1 ? 'change' : 'changes'}`}</h2>
-      {changes === null && <p>Check the message below each input.</p>}
-      {changes?.map(change => <article key={`${change.scope}:${change.name}:${change.key}`}>
-        <div className="service">{change.name}</div>
-        <div><h3>{change.title}</h3>
-        {change.warning && <p>{change.warning}</p>}
-        <div className="diff">
-          {change.before && <pre><span aria-label="Before">−</span>{change.before}</pre>}
-          {change.after && <pre><span aria-label="After">+</span>{change.after}</pre>}
-        </div></div>
-      </article>)}
-    </section>
-  </main>
+  const [files, setFiles] = useState<Pair>(example)
+  const [view, setView] = useState<View>('changes')
+  const [replace, setReplace] = useState<'example' | 'empty'>('empty')
+  const [revision, setRevision] = useState(0)
+  const help = useRef<HTMLDialogElement>(null)
+  const confirm = useRef<HTMLDialogElement>(null)
+  const [before, after] = files
+  const { active, semantic } = useReport(view, before.text, after.text)
+  const report = active?.result
+  const errors = semantic?.view === 'changes' ? semantic.errors : []
+  const blank = files.map(file => !file.text.trim())
+  const ready = !blank.some(Boolean)
+  const sample = files.every((file, index) => file === example[index])
+  const matched = report?.view === 'changes' && !errors.some(Boolean) && ready
+
+  function update(index: 0 | 1, input: Input) {
+    setFiles(current => index === 0 ? [input, current[1]] : [current[0], input])
+  }
+
+  function replaceFiles(kind: 'example' | 'empty') {
+    setFiles(kind === 'example' ? example : empty)
+    setView('changes')
+    setRevision(current => current + 1)
+  }
+
+  function requestReplace(kind: 'example' | 'empty') {
+    if (sample || blank.every(Boolean)) {
+      replaceFiles(kind)
+    } else {
+      setReplace(kind)
+      confirm.current?.showModal()
+    }
+  }
+
+  const status = !ready ? 'Open or paste YAML in both editors to compare.' :
+    active?.error ?? (!report ? 'Comparing files…' : report.view === 'changes' && errors.some(Boolean) ?
+      'Fix the YAML errors or switch to Source diff.' : '')
+
+  return <>
+    <a className="skip" href="#comparison">Skip to comparison</a>
+    <header className="masthead">
+      <div className="shell masthead-inner">
+        <div className="brand"><img src={`${import.meta.env.BASE_URL}mark.svg`} alt="" width="32" height="32" /> ComposeDiff</div>
+        <nav aria-label="Project">
+          <button className="button subtle" onClick={() => help.current?.showModal()}>How it works</button>
+          <a className="button" href={repository} target="_blank" rel="noreferrer"><Icon name="github" /> GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main className="shell">
+      <div className="intro">
+        <div>
+          <h1>Compare Compose files</h1>
+          <p>See what changes in your Docker Compose configuration before you deploy.</p>
+        </div>
+        <div className="actions" role="group" aria-label="Manage files">
+          <button className="button subtle" onClick={() => requestReplace('empty')} disabled={blank.every(Boolean)}>Clear</button>
+          <button className="button" onClick={() => requestReplace('example')} disabled={sample}>Load example</button>
+          <button className="button" onClick={() => {
+            setFiles([after, before])
+            setRevision(current => current + 1)
+          }} disabled={blank.every(Boolean)}><Icon name="swap" /> Swap</button>
+        </div>
+      </div>
+      <div className="workspace">
+        <Editor key={`before-${revision}`} side="Before" input={before} onChange={input => update(0, input)} error={errors[0]} />
+        <Editor key={`after-${revision}`} side="After" input={after} onChange={input => update(1, input)} error={errors[1]} />
+      </div>
+      <p className="privacy"><Icon name="lock" /> Files stay in this tab. No uploads or autosave.</p>
+      <section id="comparison" aria-labelledby="comparison-title" tabIndex={-1}>
+        <div className="report-heading">
+          <h2 id="comparison-title">Comparison</h2>
+          <div className="views" role="group" aria-label="Comparison view">
+            <button className="button" aria-pressed={view === 'changes'} onClick={() => setView('changes')}>Changes</button>
+            <button className="button" aria-pressed={view === 'source'} onClick={() => setView('source')}>Source diff</button>
+          </div>
+        </div>
+        {status && <p className="empty-state" role="status">{status}</p>}
+        {matched && <ChangeList report={report} />}
+        {ready && report?.view === 'source' && <SourceDiff report={report} />}
+      </section>
+    </main>
+    <dialog ref={help} aria-labelledby="help-title">
+      <h2 id="help-title">How ComposeDiff compares files</h2>
+      <p>Open or paste the original file on the left and the proposed version on the right. Changes update as you edit.</p>
+      <p><strong>Changes</strong> compares settings and skips comments, key order and common equivalent syntax. Warnings flag a few changes worth checking, such as a port losing its loopback binding.</p>
+      <p><strong>Source diff</strong> shows the original text, including passwords and tokens. Changes and Markdown hide environment variable names and values, plus top-level config and secret definitions. Other fields can still contain sensitive values.</p>
+      <p>For overrides, variables, <code>include</code> or <code>extends</code>, run <code>docker compose config</code> locally for each version. Paste the resolved files to compare the effective configuration.</p>
+      <form method="dialog"><button className="button primary">Close</button></form>
+    </dialog>
+    <dialog ref={confirm} aria-labelledby="confirm-title">
+      <h2 id="confirm-title">{replace === 'example' ? 'Load the example?' : 'Clear both editors?'}</h2>
+      <p>This replaces the current text in both editors.</p>
+      <form method="dialog">
+        <button className="button" autoFocus>Cancel</button>
+        <button className="button primary" onClick={() => replaceFiles(replace)}>
+          {replace === 'example' ? 'Load example' : 'Clear both'}
+        </button>
+      </form>
+    </dialog>
+  </>
 }
 
 createRoot(document.getElementById('root')!).render(<App />)

@@ -30,5 +30,3 @@ export const empty: Pair = [
   { text: '', filename: 'compose.before.yaml' },
   { text: '', filename: 'compose.after.yaml' },
 ]
-
-export const [before, after] = example.map(input => input.text)
