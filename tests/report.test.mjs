@@ -8,7 +8,9 @@ const report = (view, before, after) => buildReport({ id: 0, view, before, after
 test('reports invalid YAML on the affected side and still allows a source diff', () => {
   const before = 'services: {}\n', after = 'services: [\n'
   assert.equal(report('changes', before, after).errors[0], undefined)
-  assert.match(report('changes', before, after).errors[1], /Line/)
+  const error = report('changes', before, after).errors[1]
+  assert.match(error.message, /Line/)
+  assert.equal(error.location.line, 2)
   assert.deepEqual(report('source', before, after).hunks[0].lines, ['-services: {}', '+services: ['])
 })
 

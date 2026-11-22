@@ -1,10 +1,11 @@
 import { structuredPatch } from 'diff'
-import { compare, parseCompose, type Change } from './compare.ts'
+import { compare, parseCompose, YamlError, type Change } from './compare.ts'
 import { MAX_INPUT } from './limits.ts'
 
 export type View = 'changes' | 'source'
 export type Request = { id: number; view: View; before: string; after: string }
-export type Semantic = { view: 'changes'; errors: [string?, string?]; changes: Change[]; notes: string[] }
+export type Diagnostic = { message: string; location?: { line: number; column: number } }
+export type Semantic = { view: 'changes'; errors: [Diagnostic?, Diagnostic?]; changes: Change[]; notes: string[] }
 export type Source = { view: 'source'; hunks: ReturnType<typeof structuredPatch>['hunks']; error?: string }
 export type Result = Semantic | Source
 
@@ -13,8 +14,10 @@ function parse(text: string) {
   try {
     return { document: parseCompose(text) }
   } catch (error) {
-    return { error: error instanceof RangeError ? 'This YAML has too many levels of nesting.' :
+    const diagnostic: Diagnostic = { message: error instanceof RangeError ? 'This YAML has too many levels of nesting.' :
       error instanceof Error ? error.message : 'Could not read this YAML.' }
+    if (error instanceof YamlError) diagnostic.location = { line: error.line, column: error.column }
+    return { error: diagnostic }
   }
 }
 

@@ -94,7 +94,8 @@ h1 { font-size: clamp(1.95rem, 4vw, 3.15rem); line-height: 1.05; letter-spacing:
 .editor .cm-focused .cm-activeLine { background: #28212c }
 .editor .cm-placeholder { color: var(--quiet) }
 .editor .cm-cursor { border-left-color: var(--accent) }
-.error { margin: 0; padding: .6rem .85rem; border-top: 1px solid var(--line); color: var(--yellow); font-size: .85rem; overflow-wrap: anywhere }
+.error { display: flex; align-items: baseline; flex-wrap: wrap; gap: .4rem .75rem; padding: .5rem .85rem; border-top: 1px solid var(--line); color: var(--yellow); font-size: .85rem; overflow-wrap: anywhere }
+.error p { margin: 0; min-width: 0 }
 .privacy { color: var(--quiet); font-size: .8rem; gap: .45rem; margin: .7rem 0 1.85rem }
 #comparison { padding: 1.05rem 0 3rem; border-top: 1px solid var(--line) }
 .report-heading { justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin-bottom: .75rem }

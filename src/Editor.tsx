@@ -7,6 +7,7 @@ import { yaml } from '@codemirror/lang-yaml'
 import { tags } from '@lezer/highlight'
 import { MAX_INPUT } from './limits'
 import type { Input } from './demo'
+import type { Diagnostic } from './report'
 import { Icon } from './icons'
 
 const highlighting = syntaxHighlighting(HighlightStyle.define([
@@ -29,7 +30,7 @@ function attrs(side: string, error?: string) {
 }
 
 export function Editor({ side, input, onChange, error }: {
-  side: 'Before' | 'After'; input: Input; onChange: (input: Input, opened?: boolean) => void; error?: string
+  side: 'Before' | 'After'; input: Input; onChange: (input: Input, opened?: boolean) => void; error?: Diagnostic
 }) {
   const host = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -39,7 +40,8 @@ export function Editor({ side, input, onChange, error }: {
   const attributes = useRef(new Compartment())
   const [fileError, setFileError] = useState('')
   const [dragging, setDragging] = useState(false)
-  const message = fileError || error
+  const message = fileError || error?.message
+  const location = fileError ? undefined : error?.location
 
   useLayoutEffect(() => {
     state.current = { input, onChange }
@@ -85,6 +87,17 @@ export function Editor({ side, input, onChange, error }: {
   useLayoutEffect(() => {
     view.current?.dispatch({ effects: attributes.current.reconfigure(attrs(side, message)) })
   }, [side, message])
+
+  function goToError({ line, column }: NonNullable<Diagnostic['location']>) {
+    const editor = view.current
+    if (!editor) return
+    const target = editor.state.doc.line(Math.min(line, editor.state.doc.lines))
+    editor.dispatch({
+      selection: { anchor: Math.min(target.from + column - 1, target.to) },
+      scrollIntoView: true,
+    })
+    editor.focus()
+  }
 
   async function openFiles(files: FileList) {
     const id = ++reading.current
@@ -143,6 +156,11 @@ export function Editor({ side, input, onChange, error }: {
       <span>{dragging ? 'Drop to open file' : 'Paste, edit or drop a file'}</span>
       <span>YAML</span>
     </div>
-    {message && <p className="error" id={`${side}-error`} role="status">{message}</p>}
+    {message && <div className="error">
+      <p id={`${side}-error`} role="status">{message}</p>
+      {location && <button className="button subtle" type="button" onClick={() => goToError(location)}>
+        Go to line {location.line}
+      </button>}
+    </div>}
   </section>
 }

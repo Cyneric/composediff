@@ -192,6 +192,17 @@ function normalizeService(service: Mapping, name: string): Service {
   return { fields, ports: bindings, mounts }
 }
 
+export class YamlError extends Error {
+  readonly line: number
+  readonly column: number
+
+  constructor(message: string, line: number, column: number) {
+    super(`Line ${line}, column ${column}: ${message}`)
+    this.line = line
+    this.column = column
+  }
+}
+
 export function parseCompose(source: string): Compose {
   if (source.length > MAX_INPUT) throw Error('Use files with at most 500,000 characters.')
   const lineCounter = new LineCounter()
@@ -199,7 +210,7 @@ export function parseCompose(source: string): Compose {
   const problem = doc.errors[0] ?? doc.warnings[0]
   if (problem) {
     const { line, col } = lineCounter.linePos(problem.pos[0])
-    throw Error(`Line ${line}, column ${col}: ${problem.message}`)
+    throw new YamlError(problem.message, line, col)
   }
   const data: unknown = doc.toJS({ maxAliasCount: 50 })
   if (!mapping(data) || !mapping(data.services)) throw Error('Expected a top-level services mapping.')
