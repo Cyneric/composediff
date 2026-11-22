@@ -103,6 +103,23 @@ def check(url):
         expect(before).to_have_text("services: {}")
         expect(page.get_by_role("heading", name="Service added")).to_be_visible()
 
+        after.fill("services:\n" + "".join(f"  app{i}: {{image: alpine}}\n" for i in range(6)))
+        search = page.get_by_role("searchbox", name="Search changes")
+        search.fill("app4")
+        expect(page.get_by_role("heading", name="service app4")).to_be_visible()
+        expect(page.get_by_role("heading", name="service app0")).to_have_count(0)
+        after.fill("services: {app0: {image: alpine}}")
+        expect(search).to_have_value("app4")
+        expect(page.get_by_text("No matching changes.")).to_be_visible()
+        search.fill("")
+        expect(page.get_by_role("heading", name="service app0")).to_be_visible()
+
+        after.fill("services: {app0: {image: alpine, privileged: true}}")
+        page.get_by_role("button", name="Warnings 1").click()
+        after.fill("services: {app0: {image: alpine}}")
+        expect(page.get_by_role("button", name="All changes 1")).to_have_attribute("aria-pressed", "true")
+        expect(page.get_by_role("heading", name="Service added")).to_be_visible()
+
         page.set_viewport_size({"width": 360, "height": 800})
         page.reload(wait_until="networkidle")
         expect(warning).to_be_visible()

@@ -90,7 +90,7 @@ function App() {
           </div>
         </div>
         {status && <p className="empty-state" role="status">{status}</p>}
-        {matched && <ChangeList report={report} />}
+        <ChangeList key={revisions.join(':')} report={matched ? report : undefined} />
         {ready && report?.view === 'source' && <SourceDiff report={report} />}
       </section>
     </main>

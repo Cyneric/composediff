@@ -29,13 +29,16 @@ function groupByName(changes: Change[]) {
   return [...groups.entries()]
 }
 
-export function ChangeList({ report }: { report: Semantic }) {
+export function ChangeList({ report }: { report?: Semantic }) {
   const [warningsOnly, setWarningsOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [limit, setLimit] = useState(pageSize)
+  if (!report) return null
+
   const warnings = report.changes.filter(change => change.warning)
+  const filterWarnings = warningsOnly && warnings.length > 0
   const query = search.trim().toLowerCase()
-  const available = (warningsOnly ? warnings : report.changes)
+  const available = (filterWarnings ? warnings : report.changes)
     .filter(change => `${change.scope} ${change.name} ${change.title}`.toLowerCase().includes(query))
   const groups = groupByName(available.slice(0, limit))
   return <>
@@ -46,17 +49,17 @@ export function ChangeList({ report }: { report: Semantic }) {
     </div> : <>
       <div className="filter-row">
         <div className="filters" role="group" aria-label="Filter changes">
-          <button className="button filter" aria-pressed={!warningsOnly} onClick={() => {
+          <button className="button filter" aria-pressed={!filterWarnings} onClick={() => {
             setWarningsOnly(false)
             setLimit(pageSize)
           }}>All changes <span>{report.changes.length}</span></button>
-          {warnings.length > 0 && <button className="button filter" aria-pressed={warningsOnly} onClick={() => {
+          {warnings.length > 0 && <button className="button filter" aria-pressed={filterWarnings} onClick={() => {
             setWarningsOnly(true)
             setLimit(pageSize)
           }}><Icon name="warning" /> Warnings <span>{warnings.length}</span></button>}
         </div>
         <div className="report-actions">
-          {report.changes.length > 5 && <input type="search" value={search} aria-label="Search changes" placeholder="Find a service or setting"
+          {(report.changes.length > 5 || search) && <input type="search" value={search} aria-label="Search changes" placeholder="Find a service or setting"
             onChange={event => { setSearch(event.target.value); setLimit(pageSize) }} />}
           <ExportButtons report={report} />
         </div>
@@ -77,7 +80,7 @@ export function ChangeList({ report }: { report: Semantic }) {
   </>
 }
 
-export function ExportButtons({ report }: { report: Semantic }) {
+function ExportButtons({ report }: { report: Semantic }) {
   const [status, setStatus] = useState('')
   const text = () => markdown(report.changes, report.notes)
   const download = () => {
