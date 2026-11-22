@@ -1,0 +1,12 @@
+export const before = `services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata: {}
+`
+export const after = before.replace('127.0.0.1:', '')
