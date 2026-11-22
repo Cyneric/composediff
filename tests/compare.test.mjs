@@ -7,9 +7,9 @@ const service = config => parseCompose(JSON.stringify({ services: { db: config }
 
 test('demo flags removal of the explicit loopback address', () => {
   const changes = compare(parseCompose(demo.before), parseCompose(demo.after))
-  assert.equal(changes.length, 1)
-  assert.equal(changes[0].attention, true)
-  assert.equal(changes[0].service, 'postgres')
+  assert.equal(changes.length, 2)
+  assert.match(changes[0].warning, /other hosts/)
+  assert.equal(changes[0].name, 'postgres')
 })
 
 test('equivalent long syntax and reordered bindings do not create changes', () => {
@@ -30,4 +30,53 @@ test('incomplete and unresolved documents cannot produce an empty diff', () => {
   for (const file of ['services: [', 'services: null', 'services: {db: {ports: 80}}', 'include: [db.yml]\nservices: {}']) {
     assert.throws(() => parseCompose(file))
   }
+})
+
+test('compares environment values without including them in the report', () => {
+  assert.deepEqual(compare(service({ environment: ['FOO=old', 'EMPTY='] }), service({ environment: { EMPTY: '', FOO: 'old' } })), [])
+  const [change] = compare(service({ environment: ['FOO=old'] }), service({ environment: { FOO: 'new', ADDED: 'private' } }))
+  assert.equal(change.title, 'Environment variables updated')
+  assert.equal(change.after, '1 added, 1 changed. Names and values hidden.')
+})
+
+test('compares project resources without printing secret or config contents', () => {
+  const a = parseCompose('services: {}\nsecrets: {token: {file: ./token}}')
+  const b = parseCompose('services: {}\nsecrets: {token: {file: ./next}}\nnetworks: {backend: {internal: true}}')
+  const changes = compare(a, b)
+  assert.deepEqual(changes.map(change => [change.scope, change.title]), [
+    ['Project', 'networks.backend added'], ['Project', 'secrets.token changed'],
+  ])
+  assert.equal(changes[1].after, 'Definition hidden')
+})
+
+test('ignores extension fields, comments, map order and common equivalent syntax', () => {
+  const a = service({ depends_on: ['db2'], networks: ['backend'], labels: ['yes=1'], profiles: ['tools', 'dev'], 'x-note': 1 })
+  const b = service({ profiles: ['dev', 'tools'], depends_on: { db2: { required: true } },
+    labels: { yes: 1 }, networks: { backend: null } })
+  assert.deepEqual(compare(a, b), [])
+})
+
+test('warns when one binding widens even if the service has several bindings', () => {
+  const a = service({ ports: ['127.0.0.1:8000:80', '8080:80'] })
+  const b = service({ ports: ['0.0.0.0:8000:80', '8080:80'] })
+  assert.ok(compare(a, b)[0].warning)
+  assert.equal(compare(b, a)[0].warning, undefined)
+})
+
+test('preserves unresolved interpolation without making a port exposure claim', () => {
+  const a = service({ ports: ['127.0.0.1:${PORT:-80}:80'] })
+  const b = service({ ports: ['${PORT:-80}:80'] })
+  assert.ok(a.notes.length)
+  assert.equal(compare(a, b).some(change => change.warning), false)
+})
+
+test('flags privileged mode and host networking', () => {
+  const changes = compare(service({}), service({ privileged: true, network_mode: 'host' }))
+  assert.equal(changes.filter(change => change.warning).length, 2)
+})
+
+test('reports YAML syntax locations and rejects circular or excessive input', () => {
+  assert.throws(() => parseCompose('services:\n  db: ['), /Line 2, column/)
+  assert.throws(() => parseCompose('services: &root {db: {x-value: *root}}'), /circular|alias/i)
+  assert.throws(() => parseCompose(' '.repeat(500_001)), /500,000/)
 })

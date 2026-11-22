@@ -1,117 +1,304 @@
-import { parseDocument } from 'yaml'
+import { LineCounter, parseDocument, stringify } from 'yaml'
+import { MAX_INPUT } from './limits.ts'
 
-type Mapping = Record<string, unknown>
-type Entry = { key: string; value: string; host?: string; published?: string }
-type Service = { image?: string; ports: Entry[]; volumes: Entry[] }
-export type Change = { service: string; title: string; before?: string; after?: string; attention?: boolean }
+type Value = null | string | number | boolean | Value[] | { [key: string]: Value }
+type Mapping = { [key: string]: Value }
+type Port = { key: string; host: string; published: string; value: string }
+type Service = {
+  fields: Mapping
+  ports: Map<string, Port[]>
+  mounts: Map<string, Value>
+}
+type Compose = { services: Map<string, Service>; project: Mapping; notes: string[] }
+export type Change = {
+  scope: 'Service' | 'Project'
+  name: string
+  key: string
+  title: string
+  action: 'added' | 'removed' | 'changed'
+  before?: string
+  after?: string
+  warning?: string
+}
 
 function mapping(value: unknown): value is Mapping {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
+  return Object.prototype.toString.call(value) === '[object Object]'
 }
 
-function stable(value: unknown): string {
-  return JSON.stringify(value, (_, v: unknown) => mapping(v)
-    ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]]))
-    : v)
+function normalize(input: unknown): Value {
+  let remaining = 60_000
+  const ancestors = new Set<object>()
+  function visit(value: unknown, depth: number): Value {
+    if (--remaining < 0 || depth > 100) throw Error('This YAML has too many values or levels of nesting.')
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (!Array.isArray(value) && !mapping(value)) throw Error('Expected plain YAML values with finite numbers.')
+    if (ancestors.has(value)) throw Error('This YAML contains a circular alias.')
+    ancestors.add(value)
+    const result = Array.isArray(value)
+      ? value.map(item => visit(item, depth + 1))
+      : Object.fromEntries(Object.keys(value).sort().map(key => [key, visit(value[key], depth + 1)]))
+    ancestors.delete(value)
+    return result
+  }
+  return visit(input, 0)
 }
 
-function port(item: unknown): Entry {
+function list(value: Value | undefined, path: string) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw Error(`${path} must be a list.`)
+  return value
+}
+
+function text(value: Value | undefined, path: string): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  throw Error(`Expected a string or number in ${path}.`)
+}
+
+function display(value: Value): string {
+  return typeof value === 'string' && value.length > 0 && !/^\s|\s$|\n/.test(value)
+    ? value : stringify(value, { lineWidth: 0 }).trimEnd()
+}
+
+function port(item: Value, path: string): Port {
   let host = '', published = '', protocol = 'tcp', target: string
   let options: Mapping = {}
-  if (mapping(item) && item.target != null) {
-    const { host_ip, published: p, target: t, protocol: proto, mode, ...rest } = item
-    host = String(host_ip ?? '').replace(/^\[(.*)\]$/, '$1')
-    published = String(p ?? '')
-    target = String(t)
-    protocol = String(proto ?? 'tcp')
-    options = mode && mode !== 'ingress' ? { ...rest, mode } : rest
+  if (mapping(item)) {
+    const { host_ip, published: rawPublished, target: rawTarget, protocol: rawProtocol, mode, ...rest } = item
+    host = host_ip == null ? '' : text(host_ip, path)
+    published = rawPublished == null ? '' : text(rawPublished, path)
+    target = text(rawTarget, path)
+    protocol = rawProtocol == null ? 'tcp' : text(rawProtocol, path)
+    options = mode == null || mode === 'ingress' ? rest : { ...rest, mode }
   } else {
-    if (typeof item !== 'number' && typeof item !== 'string') throw Error('Expected a port number or mapping with a target.')
-    const match = String(item).match(/^(?:(?:(\[[^\]]+\]|[^:/]+):)?([\d-]*):)?([\d-]+)(?:\/(tcp|udp|sctp))?$/)
-    if (!match) throw Error('Unsupported port syntax. Paste the output of docker compose config.')
-    host = (match[1] ?? '').replace(/^\[(.*)\]$/, '$1')
+    const raw = text(item, path)
+    const match = raw.match(/^(?:(?:(\[[^\]]+\]|[^:/]+):)?(\d+(?:-\d+)?|):)?(\d+(?:-\d+)?)(?:\/(tcp|udp|sctp))?$/)
+    if (!match) {
+      if (raw.includes('$')) return { key: raw, host, published, value: raw }
+      throw Error(`Could not read the port in ${path}. Try quoting it or using long syntax.`)
+    }
+    host = match[1] ?? ''
     published = match[2] ?? ''
     target = match[3]
     protocol = match[4] ?? 'tcp'
   }
-  const ip = host.includes(':') ? `[${host}]` : host
-  const value = `${ip ? ip + ':' : ''}${published || host ? published + ':' : ''}${target}/${protocol}`
-  return { key: `${target}/${protocol}`, host, published, value: value + (Object.keys(options).length ? ' ' + stable(options) : '') }
+  host = host.replace(/^\[(.*)\]$/, '$1').toLowerCase()
+  const address = host.includes(':') ? `[${host}]` : host
+  const key = `${target}/${protocol}`
+  const binding = `${address ? `${address}:` : ''}${published || address ? `${published}:` : ''}${key}`
+  return { key, host, published, value: Object.keys(options).length ? `${binding}\n${display(options)}` : binding }
 }
 
-function mount(item: unknown): Entry {
+function mount(item: Value, path: string): [string, Value] {
   if (mapping(item) && typeof item.target === 'string') {
-    const { target, source, type, read_only, ...rest } = item
-    const options = Object.keys(rest).length ? ' ' + stable(rest) : ''
-    return { key: target, value: `${type ?? 'volume'} ${source ?? '(anonymous)'} → ${target} ${read_only ? 'ro' : 'rw'}${options}` }
+    const { target, source, type = 'volume', read_only = false, ...rest } = item
+    return [target, normalize({ type, ...(source == null ? {} : { source }), target, read_only, ...rest })]
   }
-  if (typeof item !== 'string') throw Error('Expected a volume string or mapping with a target.')
-  // A Windows drive letter is part of a path, not a field separator.
-  const parts = item.match(/(?:[a-zA-Z]:[\\/][^:]*|[^:]+)/g) ?? []
-  if (!parts.length || parts.length > 3) throw Error('Unsupported volume syntax. Paste the output of docker compose config.')
-  const source = parts.length === 1 ? '' : parts[0]!
-  const target = parts.length === 1 ? parts[0]! : parts[1]!
-  const mode = parts[2]
+  if (typeof item !== 'string') throw Error(`Expected a mount string or mapping with a target in ${path}.`)
+  const fields: string[] = []
+  const part = /(?:[a-zA-Z]:[\\/])?(?:\$\{[^}]*\}|[^:])*/y
+  let offset = 0
+  do {
+    part.lastIndex = offset
+    const value = part.exec(item)?.[0] ?? ''
+    fields.push(value)
+    offset += value.length + 1
+  } while (offset <= item.length && fields.length < 4)
+  if (fields.some(field => !field) || fields.length > 3) throw Error(`Could not read the mount in ${path}.`)
+  const [source, target, mode] = fields.length === 1 ? ['', fields[0], 'rw'] : fields
+  const access = (mode ?? 'rw').split(',')
   const type = /^(?:[./~\\]|[a-zA-Z]:[\\/])/.test(source) ? 'bind' : 'volume'
-  return { key: target, value: `${type} ${source || '(anonymous)'} → ${target} ${mode ?? 'rw'}` }
-}
-
-export function parseCompose(text: string): Map<string, Service> {
-  if (text.length > 500_000) throw Error('Use files smaller than 500,000 characters.')
-  const doc = parseDocument(text, { merge: true, prettyErrors: false })
-  const problem = doc.errors[0] ?? doc.warnings[0]
-  if (problem) throw Error(problem.message)
-  const data: unknown = doc.toJS({ maxAliasCount: 50 })
-  if (!mapping(data) || !mapping(data.services)) throw Error('Expected a services: mapping.')
-  if ('include' in data) throw Error('Resolve included files first with docker compose config.')
-  const result = new Map<string, Service>()
-  for (const [name, svc] of Object.entries(data.services)) {
-    if (!mapping(svc)) throw Error(`Expected a mapping for service ${name}.`)
-    if ('extends' in svc) throw Error('Resolve extended services first with docker compose config.')
-    if (svc.image !== undefined && typeof svc.image !== 'string') throw Error(`Expected an image name in ${name}.`)
-    function entries(field: string, list: unknown, convert: (item: unknown) => Entry) {
-      if (list === undefined) return []
-      if (!Array.isArray(list)) throw Error(`${name}.${field} must be a list.`)
-      return list.map(convert)
-    }
-    result.set(name, { image: svc.image, ports: entries('ports', svc.ports, port), volumes: entries('volumes', svc.volumes, mount) })
+  const value: Value = {
+    type, ...(source ? { source } : {}), target, read_only: access.includes('ro'),
+    ...(access.some(option => option !== 'ro' && option !== 'rw') ? { options: access.filter(option => option !== 'ro' && option !== 'rw').sort() } : {}),
   }
-  return result
+  return [target, normalize(value)]
 }
 
-function groups(entries: Entry[]) {
-  const result = new Map<string, Entry[]>()
-  for (const entry of entries) {
-    const group = result.get(entry.key)
+function keyed(value: Value, path: string, separator: string): Mapping {
+  if (mapping(value)) return value
+  return Object.fromEntries(list(value, path).map((item): [string, Value] => {
+    const entry = text(item, path)
+    const index = entry.indexOf(separator)
+    return index < 0 ? [entry, null] : [entry.slice(0, index), entry.slice(index + 1)]
+  }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+}
+
+function normalizeService(service: Mapping, name: string): Service {
+  const { ports, volumes, ...fields } = service
+  if ('extends' in fields) throw Error(`Resolve extends in ${name} with docker compose config.`)
+  for (const field of ['environment', 'labels', 'sysctls', 'storage_opt']) {
+    if (fields[field] === undefined) continue
+    const entries = keyed(fields[field], `${name}.${field}`, '=')
+    fields[field] = normalize(field === 'environment' || field === 'labels'
+      ? Object.fromEntries(Object.entries(entries).map(([key, value]) => [key, value === null ? null : text(value, `${name}.${field}`)]))
+      : entries)
+  }
+  for (const field of ['networks', 'depends_on']) {
+    if (!Array.isArray(fields[field])) continue
+    fields[field] = normalize(Object.fromEntries(fields[field].map(item => [
+      text(item, `${name}.${field}`), field === 'depends_on' ? { condition: 'service_started' } : {},
+    ])))
+  }
+  for (const field of ['networks', 'depends_on']) {
+    if (!mapping(fields[field])) continue
+    fields[field] = normalize(Object.fromEntries(Object.entries(fields[field]).map(([key, config]) => {
+      if (field === 'networks') return [key, config ?? {}]
+      if (!mapping(config)) throw Error(`Expected dependency options in ${name}.${field}.${key}.`)
+      const { restart = false, required = true, condition = 'service_started', ...rest } = config
+      return [key, { condition, ...(restart !== false ? { restart } : {}), ...(required !== true ? { required } : {}), ...rest }]
+    })))
+  }
+  for (const field of ['profiles', 'cap_add', 'cap_drop', 'expose']) {
+    if (fields[field] !== undefined) fields[field] = [...new Set(list(fields[field], `${name}.${field}`).map(item => text(item, `${name}.${field}`)))].sort()
+  }
+  const bindings = new Map<string, Port[]>()
+  for (const item of list(ports, `${name}.ports`)) {
+    const entry = port(item, `${name}.ports`)
+    const group = bindings.get(entry.key)
     if (group) group.push(entry)
-    else result.set(entry.key, [entry])
+    else bindings.set(entry.key, [entry])
   }
-  return result
+  const mounts = new Map<string, Value>()
+  for (const item of list(volumes, `${name}.volumes`)) {
+    const [target, entry] = mount(item, `${name}.volumes`)
+    if (mounts.has(target)) throw Error(`${name}.volumes has more than one mount for ${target}.`)
+    mounts.set(target, entry)
+  }
+  return { fields, ports: bindings, mounts }
 }
 
-export function compare(old: Map<string, Service>, next: Map<string, Service>): Change[] {
+export function parseCompose(source: string): Compose {
+  if (source.length > MAX_INPUT) throw Error('Use files with at most 500,000 characters.')
+  const lineCounter = new LineCounter()
+  const doc = parseDocument(source, { merge: true, prettyErrors: false, lineCounter })
+  const problem = doc.errors[0] ?? doc.warnings[0]
+  if (problem) {
+    const { line, col } = lineCounter.linePos(problem.pos[0])
+    throw Error(`Line ${line}, column ${col}: ${problem.message}`)
+  }
+  const data: unknown = doc.toJS({ maxAliasCount: 50 })
+  if (!mapping(data) || !mapping(data.services)) throw Error('Expected a top-level services mapping.')
+  if ('include' in data) throw Error('Resolve include with docker compose config.')
+  const clean = normalize(data)
+  if (!mapping(clean) || !mapping(clean.services)) throw Error('Expected a top-level services mapping.')
+  const { services, version, ...project } = clean
+  const notes: string[] = []
+  if (/\$(?:\{|\w)/.test(source)) notes.push('Variables are compared as written. Resolve them with docker compose config to compare their values.')
+  const entries = new Map<string, Service>()
+  for (const [name, service] of Object.entries(services)) {
+    if (!mapping(service)) throw Error(`Expected a mapping for service ${name}.`)
+    entries.set(name, normalizeService(service, name))
+  }
+  return { services: entries, project, notes }
+}
+
+function union<T>(a: Iterable<T>, b: Iterable<T>) {
+  return [...new Set([...a, ...b])].sort()
+}
+
+function properties(value: Mapping) {
+  return new Map(Object.entries(value).filter(([key]) => !key.startsWith('x-')))
+}
+
+function equal(a: Value | undefined, b: Value | undefined) {
+  return a === b || JSON.stringify(a) === JSON.stringify(b)
+}
+
+function action(a: unknown, b: unknown): Change['action'] {
+  return a === undefined ? 'added' : b === undefined ? 'removed' : 'changed'
+}
+
+const loopback = /^(?:127\.\d+\.\d+\.\d+|::1|0:0:0:0:0:0:0:1)$/
+const wildcard = new Set(['', '0.0.0.0', '::', '0:0:0:0:0:0:0:0'])
+const portWarning = 'Docker may now accept connections to this port from other hosts. Check the host binding and firewall rules.'
+
+function widens(a: Port[], b: Port[]) {
+  const local = new Set(a.filter(port => loopback.test(port.host)).map(port => port.published))
+  const open = new Set(a.filter(port => wildcard.has(port.host)).map(port => port.published))
+  return b.some(port => /^\d+(?:-\d+)?$/.test(port.published) &&
+    local.has(port.published) && !open.has(port.published) && wildcard.has(port.host))
+}
+
+function serviceSummary(service: Service) {
+  const image = service.fields.image
+  const build = service.fields.build !== undefined
+  return [typeof image === 'string' ? image : '', build ? 'Build configured' : '',
+    service.ports.size ? `${service.ports.size} container port groups` : '',
+    service.mounts.size ? `${service.mounts.size} mounts` : ''].filter(Boolean).join('\n') || undefined
+}
+
+export function compare(before: Compose, after: Compose): Change[] {
   const out: Change[] = []
-  for (const service of [...new Set([...old.keys(), ...next.keys()])].sort()) {
-    const a = old.get(service), b = next.get(service)
+  for (const name of union(before.services.keys(), after.services.keys())) {
+    const a = before.services.get(name)
+    const b = after.services.get(name)
+    const scope = 'Service'
     if (!a || !b) {
-      out.push({ service, title: b ? 'Service added' : 'Service removed', before: a?.image, after: b?.image })
+      const verb = action(a, b)
+      out.push({ scope, name, key: 'service', action: verb, title: `Service ${verb}`,
+        before: a && serviceSummary(a), after: b && serviceSummary(b),
+        warning: b?.fields.privileged === true ? 'This service runs in privileged mode with expanded access to the host.' : undefined })
       continue
     }
-    for (const field of ['ports', 'volumes'] as const) {
-      const left = groups(a[field]), right = groups(b[field])
-      for (const key of new Set([...left.keys(), ...right.keys()])) {
-        const l = left.get(key) ?? [], r = right.get(key) ?? []
-        const before = l.map(x => x.value).sort().join('\n') || undefined
-        const after = r.map(x => x.value).sort().join('\n') || undefined
-        if (before === after) continue
-        const wasLocal = l.length === 1 && /^(?:127\.\d+\.\d+\.\d+|::1)$/.test(l[0].host ?? '')
-        const wider = field === 'ports' && wasLocal && r.length === 1 && ['', '0.0.0.0', '::'].includes(r[0].host ?? '') && l[0].published === r[0].published
-        const action = !before ? 'added' : !after ? 'removed' : 'changed'
-        const title = wider ? `Port ${key} is no longer bound to loopback` : `${field === 'ports' ? 'Port' : 'Mount'} ${key} ${action}`
-        out.push({ service, title, before, after, attention: wider })
-      }
+    for (const key of union(a.ports.keys(), b.ports.keys())) {
+      const left = a.ports.get(key) ?? [], right = b.ports.get(key) ?? []
+      const old = left.map(port => port.value).sort().join('\n') || undefined
+      const next = right.map(port => port.value).sort().join('\n') || undefined
+      if (old === next) continue
+      const verb = action(old, next)
+      const wider = widens(left, right)
+      out.push({ scope, name, key: `port:${key}`, action: verb, before: old, after: next,
+        title: wider ? `Port ${key} is no longer limited to loopback` : `Port ${key} ${verb}`,
+        warning: wider ? portWarning : undefined })
     }
-    if (a.image !== b.image) out.push({ service, title: 'Image reference changed', before: a.image, after: b.image })
+    for (const key of union(a.mounts.keys(), b.mounts.keys())) {
+      const old = a.mounts.get(key), next = b.mounts.get(key)
+      if (equal(old, next)) continue
+      const verb = action(old, next)
+      out.push({ scope, name, key: `mount:${key}`, action: verb, title: `Mount ${key} ${verb}`,
+        before: old === undefined ? undefined : display(old), after: next === undefined ? undefined : display(next) })
+    }
+    const left = properties(a.fields), right = properties(b.fields)
+    for (const field of union(left.keys(), right.keys())) {
+      const old = left.get(field), next = right.get(field)
+      if (equal(old, next)) continue
+      if (field === 'environment') {
+        const a = mapping(old) ? new Map(Object.entries(old)) : new Map<string, Value>()
+        const b = mapping(next) ? new Map(Object.entries(next)) : new Map<string, Value>()
+        const counts = { added: 0, removed: 0, changed: 0 }
+        for (const key of union(a.keys(), b.keys())) {
+          if (!equal(a.get(key), b.get(key))) counts[action(a.get(key), b.get(key))]++
+        }
+        const summary = Object.entries(counts).filter(([, count]) => count).map(([verb, count]) => `${count} ${verb}`).join(', ')
+        if (summary) out.push({ scope, name, key: field, action: action(old, next), title: 'Environment variables updated', after: `${summary}. Names and values hidden.` })
+        continue
+      }
+      const verb = action(old, next)
+      const warning = field === 'privileged' && next === true
+        ? 'This service now runs in privileged mode with expanded access to the host.'
+        : field === 'network_mode' && next === 'host'
+          ? 'Where Docker supports host networking, this service shares the host network namespace.' : undefined
+      out.push({ scope, name, key: field, action: verb, title: field === 'image' ? `Image reference ${verb}` : `${field} ${verb}`,
+        before: old === undefined ? undefined : display(old), after: next === undefined ? undefined : display(next), warning })
+    }
+  }
+  const left = properties(before.project), right = properties(after.project)
+  for (const section of union(left.keys(), right.keys())) {
+    const a = left.get(section), b = right.get(section)
+    if (equal(a, b)) continue
+    const sections = new Set(['networks', 'volumes', 'configs', 'secrets'])
+    const entries = sections.has(section) && (a === undefined || mapping(a)) && (b === undefined || mapping(b))
+      ? union(Object.keys(a ?? {}), Object.keys(b ?? {})).map(key => ({ key, title: `${section}.${key}`, a: a?.[key], b: b?.[key] }))
+      : [{ key: section, title: section, a, b }]
+    for (const { key, title, a, b } of entries) {
+      if (equal(a, b)) continue
+      const verb = action(a, b)
+      const conceal = section === 'secrets' || section === 'configs'
+      out.push({ scope: 'Project', name: section, key, action: verb, title: `${title} ${verb}`,
+        before: a === undefined ? undefined : conceal ? 'Definition hidden' : display(a),
+        after: b === undefined ? undefined : conceal ? 'Definition hidden' : display(b) })
+    }
   }
   return out
 }

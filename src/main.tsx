@@ -45,10 +45,10 @@ function App() {
       <h2 id="results" aria-live="polite">{changes === null ? 'Comparison unavailable' : changes.length === 0
         ? 'No changes in the compared fields' : `${changes.length} ${changes.length === 1 ? 'change' : 'changes'}`}</h2>
       {changes === null && <p>Check the message below each input.</p>}
-      {changes?.map(change => <article key={`${change.service}:${change.title}`}>
-        <div className="service">{change.service}</div>
+      {changes?.map(change => <article key={`${change.scope}:${change.name}:${change.key}`}>
+        <div className="service">{change.name}</div>
         <div><h3>{change.title}</h3>
-        {change.attention && <p>With Docker’s default settings, other hosts may now reach this port.</p>}
+        {change.warning && <p>{change.warning}</p>}
         <div className="diff">
           {change.before && <pre><span aria-label="Before">−</span>{change.before}</pre>}
           {change.after && <pre><span aria-label="After">+</span>{change.after}</pre>}
